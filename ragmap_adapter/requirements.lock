@@ -728,8 +728,9 @@ sentencepiece==0.2.2
     # via
     #   dam
     #   perception-models
-setuptools==84.0.0
+setuptools==80.10.2
     # via
+    #   -r requirements.in
     #   osqp
     #   pytablewriter
     #   torch

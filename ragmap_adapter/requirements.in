@@ -42,3 +42,4 @@ shapely
 click
 scikit-build-core
 pybind11
+setuptools<81  # boxmot imports pkg_resources
