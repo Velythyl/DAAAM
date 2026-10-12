@@ -1,0 +1,97 @@
+# DAAAM (MIT-SPARK/DAAAM) + DAAAM-ROS + the Hydra/Khronos stack, behind RAGMAP's
+# object-mapping container contract (ragmap_adapter/). This is upstream's
+# install/install.sh, made non-interactive and pinned:
+#   - ROS 2 Jazzy on Ubuntu 24.04 (upstream's tested platform), Python 3.12;
+#   - the 16 workspace repos of install/packages.yaml at fixed commits
+#     (ragmap_adapter/workspace.repos), rosdep, then colcon with upstream's
+#     colcon_defaults (packages-skip and cmake-args unchanged);
+#   - requirements.txt (+ cvxopt, INSTALL.md's GLPK_MI route) locked as of the
+#     release date (ragmap_adapter/requirements.lock), tensorrt-cu12 10.13.3.9
+#     as INSTALL.md pins it; spark_dsg's python bindings; this checkout of daaam.
+# No weights are baked in; TensorRT engines are built per GPU at run time and
+# cached (see ragmap_adapter/README.md).
+ARG ROS_IMAGE=ros:jazzy-ros-base-noble
+
+FROM ${ROS_IMAGE} AS workspace
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# install.sh step 1 (system deps), plus what a bare ros-base image lacks.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3-vcstool python3-tk libgoogle-glog-dev nlohmann-json3-dev glpk-utils libglpk-dev ros-dev-tools \
+        git ca-certificates curl build-essential cmake python3-dev python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/ros2_ws
+COPY ragmap_adapter/workspace.repos /opt/ros2_ws/workspace.repos
+# install.sh step 2 (vcs import) and step 3 (rosdep).
+RUN mkdir -p src \
+    && vcs import --workers 4 src < workspace.repos \
+    && apt-get update \
+    && (rosdep init 2>/dev/null || true) \
+    && rosdep update --rosdistro=jazzy \
+    && rosdep install --rosdistro=jazzy --from-paths src --ignore-src -r -y \
+    && rm -rf /var/lib/apt/lists/*
+# install.sh step 4 (colcon). Upstream builds with --continue-on-error; the
+# packages DAAAM's ROS path runs are checked right after.
+COPY ragmap_adapter/colcon_defaults.yaml /opt/ros2_ws/colcon_defaults.yaml
+ENV COLCON_DEFAULTS_FILE=/opt/ros2_ws/colcon_defaults.yaml \
+    MAKEFLAGS=-j3
+RUN source /opt/ros/jazzy/setup.bash \
+    && (colcon build --continue-on-error --parallel-workers 2 --event-handlers console_cohesion+ || true) \
+    && source install/setup.bash \
+    && for pkg in hydra hydra_ros hydra_msgs hydra_visualizer spark_dsg khronos daaam_ros kimera_pgmo config_utilities; do \
+         ros2 pkg prefix "$pkg" >/dev/null || { echo "colcon did not install $pkg"; exit 1; }; \
+       done \
+    && test -x install/hydra_ros/lib/hydra_ros/hydra_ros_node \
+    && test -x install/hydra_ros/lib/hydra_ros/cluster_places_node \
+    && (find install -name '*.so*' -type f -exec strip --strip-debug {} + 2>/dev/null || true) \
+    && rm -rf build log
+
+FROM workspace AS daaam
+COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /usr/local/bin/uv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    UV_LINK_MODE=copy
+# install.sh step 0.5 + 5: the python deps into a venv that still sees ROS's
+# system packages (rclpy, cv_bridge, rosbag2_py are Python 3.12 system modules).
+COPY ragmap_adapter/requirements.lock /tmp/requirements.lock
+RUN python3 -m venv --system-site-packages ${VIRTUAL_ENV} \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python "empy==3.3.4" catkin_pkg lark pyyaml \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python -r /tmp/requirements.lock \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps --no-build-isolation /opt/ros2_ws/src/spark_dsg \
+    && uv cache clean
+COPY . /opt/daaam
+ARG DAAAM_GIT_SHA=unknown
+ENV DAAAM_ROOT=/opt/daaam \
+    DAAAM_GIT_SHA=${DAAAM_GIT_SHA} \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    MPLBACKEND=Agg \
+    PYTHONUNBUFFERED=1 \
+    RCUTILS_COLORIZED_OUTPUT=0
+# The daaam package (editable, as install.sh: ROOT_DIR is the checkout, where
+# config/ and checkpoints/ resolve). The label space the launch files name
+# ($(find-pkg-share daaam_ros)/config/labels_pseudo.{yaml,csv}) is generated
+# with daaam's own create_label_map(path, 30000), the call the daaam node makes
+# when the files are missing (INSTALL.md: "the daaam_ros build also generates"
+# them); here it is done once at build time so Hydra never races the node.
+RUN uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps -e /opt/daaam \
+    && source /opt/ros2_ws/install/setup.bash \
+    && SHARE="$(ros2 pkg prefix daaam_ros)/share/daaam_ros/config" \
+    && python -c "import sys; from daaam.utils.vision import create_label_map; create_label_map(sys.argv[1], 30000)" "$SHARE/labels_pseudo.yaml" \
+    && test -f "$SHARE/labels_pseudo.yaml" && test -f "$SHARE/labels_pseudo.csv" \
+    && printf '#!/bin/bash\nsource /opt/ros2_ws/install/setup.bash\nexport PYTHONPATH=/opt/daaam:$PYTHONPATH\nexec /opt/venv/bin/python -m ragmap_adapter.run "$@"\n' > /usr/local/bin/ragmap-run \
+    && chmod +x /usr/local/bin/ragmap-run \
+    && cd /opt/daaam \
+    && PYTHONPATH=/opt/daaam:$PYTHONPATH python -c "\
+import rclpy, rosbag2_py, cv_bridge, message_filters, tf2_ros, spark_dsg, hydra_msgs.msg; \
+import torch, ultralytics, tensorrt, boxmot, dam, open_clip, sentence_transformers, cvxpy, cvxopt; \
+from daaam.pipeline import PipelineOrchestrator; from daaam.utils.embedding import SentenceEmbeddingHandler; \
+import daaam_ros.nodes.dataloader.image_utils; \
+from ragmap_adapter.run import main; \
+print('imports ok', torch.__version__, tensorrt.__version__, spark_dsg.__file__)" \
+    && ragmap-run --help >/dev/null
+
+WORKDIR /work
+ENTRYPOINT ["ragmap-run"]
+CMD ["--help"]

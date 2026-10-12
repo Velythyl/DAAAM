@@ -1,0 +1,166 @@
+# ragmap adapter: upstream DAAAM-ROS b809646 launch/hm3d_daaam_hydra.launch.yaml, headless.
+# Two changes only: the daaam node's output_dir is an argument (upstream hard-codes
+# 'output/hm3d' under the daaam checkout), and the Hydra (RViz) and Rerun visualizer
+# includes are dropped (no display in the container).
+---
+launch:
+  # set use_sim_time globally for all nodes
+  - set_parameter: {name: use_sim_time, value: 'true'}
+
+  # development arguments
+  - arg: {name: debug, default: 'false'}
+  - arg: {name: verbosity, default: '0'}
+  - arg: {name: glog_level, default: '0'}
+  - arg: {name: print_missing, default: 'false', description: have config utilities print all missing parameters when parsing configs}
+
+  # run behavior
+  - arg: {name: scene, default: hm3d_seq_00824, description: scene name}
+  - arg: {name: log_path, default: '', description: directory to output to}
+  - arg: {name: output_dir, default: 'output/hm3d', description: 'daaam node output_dir (ragmap adapter: an absolute path)'}
+  - arg: {name: exit_after_clock, default: 'true', description: shutdown hydra node after a rosbag finishes playing}
+
+  # ROS2 node parameters
+  - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
+  - arg: {name: sync_tolerance, default: '0.066'}
+  - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
+
+  # robot configuration
+  - arg: {name: robot_id, default: '0', description: unique robot identifier}
+  - arg: {name: sensor_frame, default: forward, description: camera frame}
+  - arg: {name: robot_frame, default: forward, description: robot body tf frame}
+  - arg: {name: odom_frame, default: world, description: odometry (map) frame}
+  - arg: {name: map_frame, default: map, description: backend scene graph frame}
+
+  # configuration
+  - arg: {name: hydra_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_config/clio_dataset_khronos.yaml}
+  - arg: {name: input_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_ros_config/hm3d_dataset_input_config.yaml}
+  - arg: {name: lcd_config_path, default: $(find-pkg-share hydra)/config/lcd/uhumans2.yaml}
+  - arg: {name: enable_lcd, default: 'false'}
+  - arg: {name: bounding_box_type, default: OBB}
+
+  # topics from CODa bag
+  - arg: {name: rgb_topic, default: /forward/color/image_raw}
+  - arg: {name: rgb_info_topic, default: /forward/camera_info}
+  - arg: {name: depth_topic, default: /forward/depth/image_rect_raw}
+  - arg: {name: label_topic, default: /segmentation/image_raw}
+  - arg: {name: colored_label_topic, default: /segmentation/color/image_raw}
+  - arg: {name: odom_topic, default: '/none'}  # no odometry messages, poses are in /tf
+
+  # dataset semantics
+  - arg: {name: labelspace_path, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+
+  # DAAAM args:
+  - arg: {name: query_interval_frames, default: '90'}  # default: 90
+  - arg: {name: min_obs_per_track, default: '8'} # default: 6
+  - arg: {name: multi_image_min_n_masks, default: '32'} # default: 32
+  - arg: {name: min_mask_region_area, default: '800'}
+  - arg: {name: max_mask_region_area, default: '777600'}  # 640*480 (unused)
+  - arg: {name: depth_lb, default: '0.05'}
+  - arg: {name: depth_ub, default: '3.0'}
+
+  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
+  - arg: {name: grounding_worker, default: 'dam_multi_image'}
+  - arg: {name: num_assignment_workers, default: '1'}
+  - arg: {name: num_grounding_workers, default: '1'}
+
+  # SAM model arguments (for overriding)
+  - arg: {name: sam_model, default: 'fastsam/FastSAM-x-640x480.engine'}  # TensorRT model (480w×640h)
+  - arg: {name: sam_imgsz, default: '480,640'}  # Size for TensorRT (height,width) - CODa is 1024h×1244w, resizes to 1024h×1248w
+  
+  # output
+  - arg: {name: enable_zmq, default: 'false'}
+  - arg: {name: zmq_url, default: 'tcp://127.0.0.1:8001'}
+  - arg: {name: zmq_send_mesh, default: 'false'}
+
+  - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
+  - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id world --child-frame-id map'}
+
+  - include:
+      file: $(find-pkg-share daaam_ros)/launch/daaam_node.launch.yaml
+      arg:
+        # Topic configuration
+        - {name: rgb_topic, value: $(var rgb_topic)}
+        - {name: depth_topic, value: $(var depth_topic)}
+        - {name: camera_info_topic, value: $(var rgb_info_topic)}
+        - {name: dsg_update_topic, value: '/hydra/backend/dsg'}
+        - {name: segmentation_topic, value: $(var label_topic)}
+        - {name: segmentation_color_topic, value: $(var colored_label_topic)}
+
+        # ROS node parameters
+        - {name: depth_scale, value: $(var depth_scale)}
+        - {name: world_frame, value: $(var odom_frame)}
+        - {name: camera_frame, value: $(var sensor_frame)}
+
+        # Configuration files
+        - {name: semantic_config, value: $(var labelspace_path)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+
+        # Model configuration
+        - {name: sam_model, value: $(var sam_model)}
+        - {name: sam_model_config_path, value: 'fastsam/fastsam_config.yaml'}
+        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: sentence_embedding_model, value: ""} # Qwen/Qwen3-Embedding-4B
+        - {name: compute_full_image_description, value: 'true'}
+
+        # Processing parameters
+        - {name: depth_lb, value: $(var depth_lb)}
+        - {name: depth_ub, value: $(var depth_ub)}
+        - {name: query_interval_frames, value: $(var query_interval_frames)} # default: 90
+        - {name: num_assignment_workers, value: $(var num_assignment_workers)}
+        - {name: num_grounding_workers, value: $(var num_grounding_workers)}
+        - {name: min_mask_region_area, value: $(var min_mask_region_area)} # ~h*w/1000, default: 300
+        - {name: max_mask_region_area, value: $(var max_mask_region_area)} # ~h*w, default: 640*480
+
+        # Worker configuration
+        - {name: assignment_worker, value: $(var assignment_worker)}
+        - {name: grounding_worker, value: $(var grounding_worker)}
+        - {name: min_obs_per_track, value: $(var min_obs_per_track)} # default: 6
+        - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)} # default: 32
+        - {name: save_debug_data, value: 'false'}
+        - {name: save_grounding_images, value: 'true'}
+        - {name: save_plain_grounding_images, value: 'false'}
+        - {name: save_object_images, value: 'true'}
+
+        - {name: dataset_name, value: 'hm3d'}
+
+        # Output
+        - {name: enable_debug_output, value: 'true'}
+        - {name: output_dir, value: $(var output_dir)}
+        - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+        
+
+  - set_remap: {from: /hydra/meta_data_in, to: /daaam_node/semantic_updates}
+  # Hydra node
+  - node:
+      sigterm_timeout: 35.0
+      sigkill_timeout: 70.0
+      pkg: hydra_ros
+      exec: hydra_ros_node
+      name: hydra
+      on_exit: shutdown
+      launch-prefix: $(if $(var debug) 'gdbserver localhost:3000')
+      env:
+        - {name: TERM, value: xterm-256color}
+      remap:
+        - {from: hydra/input/left_cam/depth_registered/image_rect, to: $(var depth_topic)}
+        - {from: hydra/input/left_cam/rgb/image_raw, to: $(var rgb_topic)}
+        - {from: hydra/input/left_cam/rgb/camera_info, to: $(var rgb_info_topic)}
+        - {from: hydra/input/left_cam/semantic/image_raw, to: $(var label_topic)}
+      args: >
+        # start subst_value files
+        --config-utilities-file $(var input_config_path)
+        # end subst value files
+        --config-utilities-file $(var hydra_config_path)
+        --config-utilities-file $(var labelspace_path)
+        --config-utilities-file $(var lcd_config_path)
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/mesh_segmenter_sinks.yaml@frontend/objects
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/gvd_places_sinks.yaml@frontend/freespace_places
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/active_window_sinks.yaml@active_window
+        --config-utilities-yaml {exit_after_clock: $(var exit_after_clock), log_path: $(var log_path)}
+        --config-utilities-yaml {print_missing: $(var print_missing), glog_level: $(var glog_level), verbosity: $(var verbosity)}
+        --config-utilities-yaml {robot_id: $(var robot_id), odom_frame: $(var odom_frame), robot_frame: $(var robot_frame), map_frame: $(var map_frame)}
+
+        --config-utilities-yaml {enable_zmq: $(var enable_zmq), backend: {zmq_sink: {url: $(var zmq_url), send_mesh: $(var zmq_send_mesh)}}}
+        --config-utilities-yaml {frontend: {objects: {bounding_box_type: $(var bounding_box_type)}}}
+        --config-utilities-yaml {enable_lcd: $(var enable_lcd)}

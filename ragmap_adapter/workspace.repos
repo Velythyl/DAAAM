@@ -1,0 +1,21 @@
+# The colcon workspace of install/packages.yaml, pinned to the commits each
+# branch pointed at on 2026-10-12 (`git ls-remote`), over https (the upstream
+# file uses ssh URLs). `daaam` itself is not here: the image pip-installs this
+# checkout instead (upstream's install.sh does `pip install -e daaam`).
+repositories:
+  daaam_ros:        {type: git, url: https://github.com/MIT-SPARK/DAAAM-ROS.git,        version: b80964647efefc66fbfe887c96cc19269c3504dc}  # main
+  hydra:            {type: git, url: https://github.com/MIT-SPARK/Hydra.git,            version: f9fc834b07f1c9d3207fee674747f17c41a75262}  # project/daaam
+  hydra_ros:        {type: git, url: https://github.com/MIT-SPARK/Hydra-ROS.git,        version: 5e6f14bf6395f33968705d68cdd3650fcb12d998}  # project/daaam
+  spark_dsg:        {type: git, url: https://github.com/MIT-SPARK/Spark-DSG.git,        version: 39f1c2e28789620c968aa44d35d2938616385e32}  # project/daaam
+  khronos:          {type: git, url: https://github.com/nicogorlo/Khronos.git,          version: 3b961d6c6b43ef7a351c103190e3aec21ae8cb95}  # main
+  config_utilities: {type: git, url: https://github.com/MIT-SPARK/config_utilities.git, version: 1df5f6b5444f8823232cfdb1cef69c2bd41ada96}  # main
+  ianvs:            {type: git, url: https://github.com/MIT-SPARK/Ianvs.git,            version: 36f09956de88b44a579abe17bbfdcd0cc74eb929}  # main
+  kimera_pgmo:      {type: git, url: https://github.com/MIT-SPARK/Kimera-PGMO.git,      version: 382b1f3530f4df69347309687d6887ed2905446c}  # ros2
+  kimera_rpgo:      {type: git, url: https://github.com/MIT-SPARK/Kimera-RPGO.git,      version: 222ad5e863daa26419b3341ad62e44fb307cba14}  # develop
+  pose_graph_tools: {type: git, url: https://github.com/MIT-SPARK/pose_graph_tools.git, version: 965dfe864487be9040195c598fd89718563c348c}  # ros2
+  semantic_inference: {type: git, url: https://github.com/MIT-SPARK/semantic_inference.git, version: 23c59882a079b9ae5166a8e03b6f37e620394366}  # main
+  spatial_hash:     {type: git, url: https://github.com/MIT-SPARK/Spatial-Hash.git,     version: 8045892f34978d78870d806a50f8e5aefdbe52fc}  # main
+  teaser_plusplus:  {type: git, url: https://github.com/MIT-SPARK/TEASER-plusplus.git,  version: 52a9c52ee7d4c838c5e8a75458c33178be5bfb70}  # master
+  gtsam:            {type: git, url: https://github.com/borglab/gtsam.git,              version: 3985b08a8237b072ae977028867a5f2fb9994384}  # release/4.2
+  small_gicp:       {type: git, url: https://github.com/koide3/small_gicp.git,          version: fa0cfc983417c044b6036f71dfa448038bb9c820}  # master
+  vision_opencv:    {type: git, url: https://github.com/ros-perception/vision_opencv.git, version: 50f6f1feccc65dd2ef87f863cb812a8aa0789062}  # rolling

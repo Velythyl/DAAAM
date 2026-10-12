@@ -1,0 +1,44 @@
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+boxmot @ git+https://github.com/nicogorlo/boxmot.git@1dfa11e6a33c8172d07b3877a5f27a82ff8fb4cf
+dam @ git+https://github.com/nicogorlo/describe-anything-batch.git@a5fce05605ba083d76f0dc17b6ab3f8c2f5af1f3
+perception_models @ git+https://github.com/nicogorlo/perception_models@f27a7e1638306b78cb25960e4b4e0ae557da52b7
+natsort
+networkx == 3.1
+python-dotenv
+langchain
+langchain-openai
+langchain-anthropic
+langchain-google-genai
+langgraph
+matplotlib
+pydantic
+scikit-learn
+cvxpy
+scipy
+transformers
+httpx
+pyyaml
+openai
+anthropic>=0.77.0
+numpy<2.0.0
+zmq
+ultralytics
+segment_anything
+sam2
+open_clip_torch
+numba
+onnxscript
+tensorrt-cu12==10.13.3.9
+onnxslim>=0.1.71
+onnxruntime-gpu
+wheel
+rerun-sdk
+sentence_transformers==4.1.0
+transformers==4.55.4
+cvxopt
+shapely
+click
+scikit-build-core
+pybind11

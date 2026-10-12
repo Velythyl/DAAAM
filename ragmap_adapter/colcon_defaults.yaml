@@ -1,0 +1,12 @@
+# install/install.sh's colcon_defaults.yaml, except `symlink-install: false`:
+# the image deletes build/ after building, which a symlink install would point into.
+---
+build:
+  symlink-install: false
+  packages-skip: [khronos_msgs, khronos_ros, khronos_eval, hydra_multi_ros, spark_fast_lio, ouroboros_ros, ouroboros_msgs]
+  cmake-args:
+    - --no-warn-unused-cli
+    - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    - -DCONFIG_UTILS_ENABLE_ROS=OFF
+    - -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    - -DGTSAM_USE_SYSTEM_EIGEN=ON
