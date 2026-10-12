@@ -31,16 +31,21 @@ RUN mkdir -p src \
     && rosdep update --rosdistro=jazzy \
     && rosdep install --rosdistro=jazzy --from-paths src --ignore-src -r -y \
     && rm -rf /var/lib/apt/lists/*
-# install.sh step 4 (colcon). Upstream builds with --continue-on-error; the
-# packages DAAAM's ROS path runs are checked right after.
+# install.sh step 4 (colcon). Upstream builds with --continue-on-error. khronos
+# finds small_gicp only through the sourced workspace (its package.xml does not
+# declare it), so packages left unbuilt by the first pass are built in a second
+# pass with install/ sourced -- what re-running colcon in a sourced shell does.
+# The packages DAAAM's ROS path runs are checked right after.
 COPY ragmap_adapter/colcon_defaults.yaml /opt/ros2_ws/colcon_defaults.yaml
 ENV COLCON_DEFAULTS_FILE=/opt/ros2_ws/colcon_defaults.yaml \
     MAKEFLAGS=-j3
 RUN source /opt/ros/jazzy/setup.bash \
     && (colcon build --continue-on-error --parallel-workers 2 --event-handlers console_cohesion+ || true) \
     && source install/setup.bash \
-    && for pkg in hydra hydra_ros hydra_msgs hydra_visualizer spark_dsg khronos daaam_ros kimera_pgmo config_utilities; do \
-         ros2 pkg prefix "$pkg" >/dev/null || { echo "colcon did not install $pkg"; exit 1; }; \
+    && (colcon build --continue-on-error --packages-skip-build-finished --parallel-workers 2 --event-handlers console_cohesion+ || true) \
+    && source install/setup.bash \
+    && for pkg in hydra hydra_ros hydra_msgs hydra_visualizer spark_dsg khronos small_gicp daaam_ros kimera_pgmo config_utilities; do \
+         test -d "install/$pkg" || { echo "colcon did not install $pkg"; exit 1; }; \
        done \
     && test -x install/hydra_ros/lib/hydra_ros/hydra_ros_node \
     && test -x install/hydra_ros/lib/hydra_ros/cluster_places_node \

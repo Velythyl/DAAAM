@@ -45,6 +45,12 @@ so Hydra's embedding-based object merging silently switches off there):
 - *Frame times.* Synthetic timestamps (renders numbered from 0) are shifted by
   ``CLOCK_BASE_S`` so ROS time is never zero (zero means "no clock yet" under
   ``use_sim_time``); exported times are shifted back.
+- *RGB-depth pairing.* Each bag frame is one ``frames.jsonl`` record, whose
+  ``rgb`` and ``depth`` are named by that record (paired by frame id upstream of
+  here); a missing or unreadable file fails the run. DAAAM-ROS's CODa
+  dataloader pairs by position in two sorted file lists instead, where one
+  missing depth PNG would silently shift every later frame; that loader is not
+  used.
 - *DDS isolation*: a random ``ROS_DOMAIN_ID`` and localhost-only discovery, so
   two runs on one host cannot hear each other.
 
@@ -222,6 +228,21 @@ def subsample(frames: Sequence[Frame], target_hz: float) -> list[Frame]:
         if not kept or frame.timestamp - kept[-1].timestamp >= 0.9 * period:
             kept.append(frame)
     return kept
+
+
+def gravity_check(frames: Sequence[Frame]) -> dict[str, Any]:
+    """The world's up axis as the trajectory suggests it (minus the mean camera +y).
+
+    Hydra's places and cluster_places' regions assume +z up; the contract says
+    ``up_axis: z``. A level camera's +y (OpenCV: down) averages to -up, so this
+    is recorded, and a world whose estimate is far from +z fails the run rather
+    than producing nonsense places.
+    """
+
+    down = np.mean([frame.pose[:3, 1] for frame in frames], axis=0)
+    up = -down / max(float(np.linalg.norm(down)), 1e-9)
+    angle = float(np.degrees(np.arccos(np.clip(up[2], -1.0, 1.0))))
+    return {"estimated_up": up.tolist(), "angle_to_z_deg": angle, "consistency": float(np.linalg.norm(down))}
 
 
 def clock_offset(frames: Sequence[Frame]) -> float:
@@ -431,6 +452,9 @@ def ros_env(work: Path) -> dict[str, str]:
     env = dict(os.environ)
     env["ROS_DOMAIN_ID"] = str(random.SystemRandom().randint(1, 100))
     env["ROS_AUTOMATIC_DISCOVERY_RANGE"] = "LOCALHOST"
+    # Never let ultralytics pip-install anything at run time (INSTALL.md: a bare
+    # `tensorrt` would pull CUDA 13 libraries); a missing requirement fails loudly.
+    env["YOLO_AUTOINSTALL"] = "False"
     env.setdefault("HOME", "/root")
     overrides = work / "tf_overrides.yaml"
     overrides.write_text("/tf_static: {depth: 1, durability: transient_local}\n", encoding="utf-8")
@@ -635,6 +659,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         profile = PROFILES[settings.profile]
         run["settings"] = {key: getattr(settings, key) for key in settings.__dataclass_fields__}
         selected = subsample(frames, settings.target_hz)
+        gravity = gravity_check(selected)
+        run["gravity"] = gravity
+        if gravity["angle_to_z_deg"] > 30.0:
+            raise ValueError(f"The trajectory's up axis is {gravity['angle_to_z_deg']:.0f} deg from +z; "
+                             "Hydra's places need a z-up world (meta.json says up_axis z).")
         offset = clock_offset(selected)
         body_from_camera = (np.asarray(settings.body_from_camera, dtype=np.float64).reshape(4, 4)
                             if settings.body_from_camera is not None else np.eye(4))
