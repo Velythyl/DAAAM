@@ -10,8 +10,9 @@ _answer_query_openai``) makes two kinds of call on the OpenAI Responses API:
   -- the final answer, OpenAI structured output.
 
 Our service has neither (it speaks ``/v1/chat/completions``, text in, text out,
-greedy). This shim keeps the agent's loop, prompts, tools and parsing untouched
-and translates at the client boundary:
+greedy; the shim also sends ``temperature: 0``, so a vLLM OpenAI server, whose
+default is 1.0, decodes greedily too). This shim keeps the agent's loop, prompts,
+tools and parsing untouched and translates at the client boundary:
 
 **Tool calling = Qwen3.5's own tool format, rendered client-side.** The model's
 chat template (``chat_template.jinja`` of Qwen/Qwen3.5-35B-A3B-FP8 @ 9d1823d)
@@ -216,7 +217,7 @@ class ResponsesOverChat:
         for attempt in range(5):
             try:
                 response = requests.post(f"{self.base_url}/v1/chat/completions", timeout=self.timeout, json={
-                    "model": self.model, "messages": messages, "max_tokens": self.max_tokens,
+                    "model": self.model, "messages": messages, "max_tokens": self.max_tokens, "temperature": 0.0,
                     "chat_template_kwargs": {"enable_thinking": False}})
             except requests.RequestException as exc:
                 entry.setdefault("transport_errors", []).append(str(exc))
