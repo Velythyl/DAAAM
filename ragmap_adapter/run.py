@@ -133,6 +133,10 @@ PROFILES = {
 }
 
 
+class HydraStartError(RuntimeError):
+    """Hydra never built its pipeline after the clock started (a hang seen at random)."""
+
+
 @dataclass
 class Settings:
     profile: str = "hm3d"
@@ -146,6 +150,10 @@ class Settings:
     drain_timeout_s: float = 3600.0
     startup_timeout_s: float = 2400.0
     shutdown_timeout_s: float = 900.0
+    #: Seconds after the bag starts within which Hydra must report "[Hydra Frontend] started!".
+    hydra_start_timeout_s: float = 240.0
+    #: Whole-launch attempts when Hydra hangs at start (HydraStartError).
+    launch_attempts: int = 2
     sentence_model: str = "sentence-transformers/sentence-t5-xl"
     keep_bag: bool = False
     #: Optional 4x4 row-major body_from_camera (CODa: os1 <- cam0_optical); identity if absent.
@@ -179,6 +187,8 @@ class Settings:
             value = value if isinstance(value, bool) else str(value).lower() in ("1", "true", "yes")
         elif isinstance(current, float):
             value = float(value)
+        elif isinstance(current, int):
+            value = int(value)
         elif isinstance(current, str):
             value = str(value)
         setattr(self, key, value)
@@ -584,11 +594,22 @@ def run_daaam(
         time.sleep(5.0)
         log("DAAAM ready; playing the bag.")
         started = time.time()
-        player = subprocess.run(
+        player = subprocess.Popen(
             ["ros2", "bag", "play", str(bag), "--clock", "--rate", str(settings.play_rate),
              "--qos-profile-overrides-path", env["ROS_STATIC_TRANSFORM_BROADCASTER_QOS_OVERRIDES"]],
             env=env, cwd=DAAAM_ROOT, stdout=open(logs / "bag_play.log", "ab"), stderr=subprocess.STDOUT,
         )
+        # Hydra builds its pipeline only once the clock runs. It has been seen to hang
+        # before "[Hydra Frontend] started!" for the whole run (office3, 1 of 9 runs),
+        # leaving no dsg.json; fail fast so main() can relaunch instead.
+        hydra_seen = False
+        while player.poll() is None:
+            if not hydra_seen:
+                hydra_seen = "[Hydra Frontend] started!" in (logs / "launch.log").read_text(errors="replace")
+                if not hydra_seen and time.time() - started > settings.hydra_start_timeout_s:
+                    _stop(player, 10.0)
+                    raise HydraStartError(f"Hydra did not start within {settings.hydra_start_timeout_s:.0f} s of the bag.")
+            time.sleep(2.0)
         timings["play_seconds"] = time.time() - started
         if player.returncode:
             raise RuntimeError(f"ros2 bag play exited {player.returncode}; see {logs / 'bag_play.log'}.")
@@ -738,7 +759,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         run["bag"] = {**bag_info, "clock_offset_s": offset, "frames_input": len(frames),
                       "target_hz": settings.target_hz, "profile": profile.name}
         run_dir = output / "daaam_runs"
-        run["ros"] = run_daaam(settings, profile, bag, bag_info, work, run_dir, env, timings)
+        attempts = []
+        for attempt in range(1, settings.launch_attempts + 1):
+            try:
+                run["ros"] = run_daaam(settings, profile, bag, bag_info, work, run_dir, env, timings)
+                break
+            except HydraStartError as exc:
+                attempts.append(str(exc))
+                log(f"attempt {attempt}: {exc}")
+                if attempt == settings.launch_attempts:
+                    raise
+                shutil.rmtree(run_dir, ignore_errors=True)
+                shutil.move(str(work / "logs"), str(work / f"logs_failed_attempt{attempt}"))
+        run["launch_failed_attempts"] = attempts
         out = find_run_output(run_dir)
         t0 = time.time()
         postprocess(out, settings, env, work / "logs")
