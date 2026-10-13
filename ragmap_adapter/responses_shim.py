@@ -47,6 +47,8 @@ from typing import Any, Sequence
 
 import requests
 
+from ragmap_adapter.summarize import unwrap_schema_echo
+
 #: Verbatim from the Qwen3.5 chat template (the ``tools`` branch of the system turn).
 TOOLS_PREAMBLE_HEAD = "# Tools\n\nYou have access to the following functions:\n\n<tools>"
 TOOLS_PREAMBLE_TAIL = (
@@ -260,7 +262,7 @@ class ResponsesOverChat:
         for _attempt in range(self.parse_attempts):
             text = self._post("parse", model, messages)
             try:
-                parsed = text_format.model_validate_json(json_object(text))
+                parsed = text_format.model_validate(unwrap_schema_echo(json.loads(json_object(text)), text_format))
             except Exception as exc:  # noqa: BLE001 - pydantic or JSON; retried, then raised
                 errors.append(f"{type(exc).__name__}: {exc}"[:300])
                 self.log[-1]["parse_error"] = errors[-1]

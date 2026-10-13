@@ -79,8 +79,24 @@ class ChatCompletionsClient:
         response.raise_for_status()
         text = response.json()["choices"][0]["message"]["content"] or ""
         entry["reply"] = text
-        parsed = text_format.model_validate_json(_json_object(text))
+        parsed = text_format.model_validate(unwrap_schema_echo(json.loads(_json_object(text)), text_format))
         return SimpleNamespace(status="completed", output_parsed=parsed, output=[], incomplete_details=None)
+
+
+def unwrap_schema_echo(value: Any, text_format: Any) -> Any:
+    """``{"properties": {<the fields>}}`` -> ``{<the fields>}``.
+
+    With the JSON schema in its prompt, Qwen3.5 sometimes answers with the
+    instance nested under the schema's ``properties`` key (room1: 1 of 2
+    regions failed all 3 attempts this way). OpenAI's server-side structured
+    output cannot produce that shape, so it is unwrapped rather than counted as
+    a failed attempt; any other shape is validated unchanged.
+    """
+    required = set(text_format.model_json_schema().get("required") or ())
+    if (isinstance(value, dict) and set(value) == {"properties"} and isinstance(value["properties"], dict)
+            and required and required <= set(value["properties"])):
+        return value["properties"]
+    return value
 
 
 def _json_object(text: str) -> str:
