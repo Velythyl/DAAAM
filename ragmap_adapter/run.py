@@ -128,7 +128,10 @@ PROFILES = {
 class Settings:
     profile: str = "hm3d"
     target_hz: float = 10.0
-    play_rate: float = 1.0
+    #: ros2 bag play --rate. Upstream plays in real time on its hardware; on an L40S
+    #: the node keeps ~3 of 10 frames at 1.0, so the default is slowed to keep them all
+    #: (sim time is unchanged, so DAAAM sees the same 10 Hz stream).
+    play_rate: float = 0.25
     drain: bool = True
     drain_quiet_s: float = 60.0
     drain_timeout_s: float = 3600.0
@@ -502,6 +505,27 @@ def _read_status(path: Path) -> dict[str, Any]:
         return {}
 
 
+def pipeline_config(work: Path) -> Path:
+    """Upstream's ``config/pipeline_config.yaml`` with DAM-3B named by its local snapshot.
+
+    DAM's loader (``dam.model.utils``, ``language_model.builder``) asks the Hub
+    whether ``nvidia/DAM-3B`` exists before reading the cache, which fails
+    offline; given a directory it reads it directly. Same weights (the cached
+    snapshot), every other value unchanged; the DAAAM node still applies the
+    launch file's parameters on top, as upstream.
+    """
+
+    import yaml
+    from huggingface_hub import snapshot_download
+
+    config = yaml.safe_load((DAAAM_ROOT / "config" / "pipeline_config.yaml").read_text(encoding="utf-8"))
+    dam = config["workers"]["dam_grounding_config"]
+    dam["dam_model_path"] = snapshot_download(dam["dam_model_path"], local_files_only=True)
+    path = work / "pipeline_config.yaml"
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def run_daaam(
     settings: Settings, profile: Profile, bag: Path, bag_info: dict[str, Any],
     work: Path, run_dir: Path, env: dict[str, str], timings: dict[str, float],
@@ -520,7 +544,8 @@ def run_daaam(
     run_dir.mkdir(parents=True, exist_ok=True)
     launch = _spawn([
         "ros2", "launch", str(ADAPTER_DIR / "launch" / profile.launch),
-        f"output_dir:={run_dir}", f"log_path:={work / 'hydra'}", *settings.extra_launch_args,
+        f"output_dir:={run_dir}", f"log_path:={work / 'hydra'}",
+        f"pipeline_config:={pipeline_config(work)}", *settings.extra_launch_args,
     ], logs / "launch.log", launch_env)
     keeper = None
     if settings.drain:

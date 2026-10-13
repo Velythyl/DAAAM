@@ -39,6 +39,16 @@ RUN mkdir -p src \
 COPY ragmap_adapter/colcon_defaults.yaml /opt/ros2_ws/colcon_defaults.yaml
 ENV COLCON_DEFAULTS_FILE=/opt/ros2_ws/colcon_defaults.yaml \
     MAKEFLAGS=-j3
+# One build fix to the release: Hydra-ROS project/daaam's CMakeLists omits
+# src/backend/ros_meta_data_listener.cpp, so the `RosMetaDataListener` backend
+# sink every DAAAM Hydra config names (`/hydra/meta_data_in`, remapped to the
+# DAAAM node's semantic updates) is never registered and Hydra logs "No module of
+# type 'RosMetaDataListener' registered" -- DAAAM's labels and embeddings then
+# never reach Hydra's embedding-based object merging. The file is in the release;
+# the `daaam_submission` tag's CMakeLists lists it. It is added back here.
+RUN grep -q 'src/backend/ros_meta_data_listener.cpp' src/hydra_ros/hydra_ros/CMakeLists.txt \
+    || sed -i 's#^  src/backend/ros_backend_publisher.cpp$#  src/backend/ros_backend_publisher.cpp\n  src/backend/ros_meta_data_listener.cpp#' src/hydra_ros/hydra_ros/CMakeLists.txt \
+    && grep -q 'src/backend/ros_meta_data_listener.cpp' src/hydra_ros/hydra_ros/CMakeLists.txt
 RUN source /opt/ros/jazzy/setup.bash \
     && (colcon build --continue-on-error --parallel-workers 2 --event-handlers console_cohesion+ || true) \
     && source install/setup.bash \

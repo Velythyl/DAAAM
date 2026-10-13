@@ -1,5 +1,5 @@
 # ragmap adapter: upstream DAAAM-ROS b809646 launch/hm3d_daaam_hydra.launch.yaml, headless.
-# Two changes only: the daaam node's output_dir is an argument (upstream hard-codes
+# Changes: the daaam node's output_dir and pipeline_config are arguments (upstream hard-codes
 # 'output/hm3d' under the daaam checkout), and the Hydra (RViz) and Rerun visualizer
 # includes are dropped (no display in the container).
 ---
@@ -17,6 +17,7 @@ launch:
   - arg: {name: scene, default: hm3d_seq_00824, description: scene name}
   - arg: {name: log_path, default: '', description: directory to output to}
   - arg: {name: output_dir, default: 'output/hm3d', description: 'daaam node output_dir (ragmap adapter: an absolute path)'}
+  - arg: {name: pipeline_config, default: 'config/pipeline_config.yaml', description: 'daaam node pipeline_config (ragmap adapter: upstream file with DAM-3B as a local snapshot path)'}
   - arg: {name: exit_after_clock, default: 'true', description: shutdown hydra node after a rosbag finishes playing}
 
   # ROS2 node parameters
@@ -79,6 +80,7 @@ launch:
   - include:
       file: $(find-pkg-share daaam_ros)/launch/daaam_node.launch.yaml
       arg:
+        - {name: pipeline_config, value: $(var pipeline_config)}
         # Topic configuration
         - {name: rgb_topic, value: $(var rgb_topic)}
         - {name: depth_topic, value: $(var depth_topic)}
