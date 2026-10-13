@@ -22,7 +22,7 @@ supplies and where it departs from upstream.
 
 Map settings (`key=value`, see `run.py` `Settings`): `profile=hm3d|coda`
 (upstream's launch file: HM3D indoor, CODa outdoor), `target_hz=10`,
-`play_rate=1.0`, `drain=true`, `drain_quiet_s=60`, `body_from_camera=[16 floats]`
+`play_rate=0.25`, `drain=true`, `drain_quiet_s=60`, `body_from_camera=[16 floats]`
 (CODa: os1 <- cam0_optical), `launch=<name>:=<value>` (extra launch arguments).
 
 ## Mounts

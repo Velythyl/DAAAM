@@ -19,10 +19,12 @@ so Hydra's embedding-based object merging silently switches off there):
    upstream's, with only the visualizers dropped and the output directory an
    argument) starts the DAAAM node (FastSAM-x, BotSort with CLIP ReID, the
    CVXPY frame-selection MIP, DAM-3B region captions) and Hydra/Khronos. The
-   bag is played with ``ros2 bag play --clock`` at ``play_rate`` (1.0, real
-   time, as upstream) once the node and its grounding worker report ready.
+   bag is played with ``ros2 bag play --clock`` at ``play_rate`` (0.25; upstream
+   plays in real time, approved deviation) once the node and its grounding worker report ready.
 3. ``scripts/postprocess_scene_graph.py`` (sentence-t5-xl embeddings),
-   then ``cluster_places.launch.yaml`` (``interactive:=false``) -> regions.
+   then ``cluster_places.launch.yaml`` (``interactive:=false``) -> regions, with
+   upstream's (CODa) cluster_places config; the ``hm3d`` profile replaces its
+   room finder with the one of its own Hydra config (``clio_dataset_khronos.yaml``).
 4. The objects are exported to RAGMAP's object contract.
 
 ``summarize`` runs ``scripts/summarize_regions.py`` on the map's
@@ -108,6 +110,12 @@ class Profile:
     resize: tuple[int, int] | None = None
     #: The launch's depth_ub, for run.json only.
     depth_ub: float = 0.0
+    #: Hydra config (in daaam_ros/config/hydra_config) whose online ``rooms.room_finder``
+    #: replaces the one in cluster_places_config_coda.yaml; None = that file unchanged.
+    #: Upstream releases only the CODa (outdoor) cluster_places config ("min_room_size: 30
+    #: # 30 outdoors"); indoors, its room finder clusters a Replica room's ~30 places into
+    #: nothing, so the indoor profile clusters with its own launch's room finder.
+    cluster_room_finder_from: str | None = None
 
 
 PROFILES = {
@@ -115,7 +123,8 @@ PROFILES = {
     # "forward", 1080x720 renders (its max_mask_region_area is 1080*720).
     "hm3d": Profile("hm3d", "hm3d_daaam_hydra_headless.launch.yaml",
                     "/forward/color/image_raw", "/forward/depth/image_rect_raw", "/forward/camera_info",
-                    camera_frame="forward", body_frame="forward", depth_ub=3.0),
+                    camera_frame="forward", body_frame="forward", depth_ub=3.0,
+                    cluster_room_finder_from="clio_dataset_khronos.yaml"),
     # coda_daaam_hydra.launch.yaml + dataloader_coda_with_depth.launch.yaml:
     # /cam0/..., cam0_optical_frame under os1 (static), world -> os1 (dynamic).
     "coda": Profile("coda", "coda_daaam_hydra_headless.launch.yaml",
@@ -646,9 +655,30 @@ def postprocess(out: Path, settings: Settings, env: dict[str, str], logs: Path) 
         raise RuntimeError(f"postprocess_scene_graph.py wrote no {out / 'dsg_updated.json'}.")
 
 
-def cluster_places(out: Path, env: dict[str, str], logs: Path, timeout: float) -> None:
+def cluster_places_config(profile: Profile, work: Path, env: dict[str, str]) -> tuple[Path, dict[str, Any]]:
+    """The cluster_places config for ``profile``: upstream's CODa file, with the room
+    finder of the profile's Hydra config when ``cluster_room_finder_from`` is set."""
+    import yaml
+
+    prefix = subprocess.run(["ros2", "pkg", "prefix", "daaam_ros"], env=env, check=True,
+                            capture_output=True, text=True).stdout.strip()
+    share = Path(prefix) / "share" / "daaam_ros" / "config"
+    source = share / "cluster_places_config_coda.yaml"
+    if profile.cluster_room_finder_from is None:
+        config = yaml.safe_load(source.read_text(encoding="utf-8"))
+        return source, config["room_finder"]
+    config = yaml.safe_load(source.read_text(encoding="utf-8"))
+    hydra = yaml.safe_load((share / "hydra_config" / profile.cluster_room_finder_from).read_text(encoding="utf-8"))
+    config["room_finder"] = dict(hydra["backend"]["update_functors"]["rooms"]["room_finder"])
+    path = work / f"cluster_places_config_{profile.name}.yaml"
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return path, config["room_finder"]
+
+
+def cluster_places(out: Path, env: dict[str, str], logs: Path, timeout: float, config: Path) -> None:
     process = _spawn(["ros2", "launch", "daaam_ros", "cluster_places.launch.yaml",
-                      f"data_dir:={out}", "interactive:=false"], logs / "cluster_places.log", env)
+                      f"data_dir:={out}", "interactive:=false", f"cluster_places_config_path:={config}"],
+                     logs / "cluster_places.log", env)
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -710,7 +740,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         postprocess(out, settings, env, work / "logs")
         timings["postprocess_seconds"] = time.time() - t0
         t0 = time.time()
-        cluster_places(out, env, work / "logs", timeout=1800.0)
+        cluster_config, room_finder = cluster_places_config(profile, work, env)
+        run["cluster_places"] = {"config": str(cluster_config), "room_finder": room_finder}
+        cluster_places(out, env, work / "logs", timeout=1800.0, config=cluster_config)
+        shutil.copy2(cluster_config, out / "cluster_places_config.yaml")
         timings["cluster_places_seconds"] = time.time() - t0
         final = output / "daaam"
         if final.exists():
