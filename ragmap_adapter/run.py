@@ -696,6 +696,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from ragmap_adapter.summarize import main as summarize_main
 
         return summarize_main(argv[1:])
+    if argv[:1] == ["navqa"]:
+        from ragmap_adapter.navqa import main as navqa_main
+
+        return navqa_main(argv[1:])
     parser = argparse.ArgumentParser(prog="ragmap-run", description=__doc__.split("\n\n")[0])
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

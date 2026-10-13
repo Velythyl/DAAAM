@@ -47,3 +47,15 @@ OUTPUT `/output`: `objects.jsonl` (`id label caption centroid bbox_min bbox_max
 pointcloud frame_indices extra`; `extra` has `sentence_t5_xl`, `clip_feature`,
 `first_seen_s`, `last_seen_s`, `layer`), `pointclouds/*.ply`, `regions.jsonl`,
 `run.json`, and the raw run in `daaam/`.
+
+## NaVQA / OC-NaVQA agent
+
+    podman run --rm --network host <gpu> -v <runs>:<runs>:ro -v <out>:/output -v <hf>:/hf -e HF_HUB_CACHE=/hf \
+      -e RAGMAP_VLM_BASE_URL=http://127.0.0.1:PORT -e RAGMAP_VLM_MODEL=qwen3_5_35b_a3b \
+      ghcr.io/velythyl/daaam:<tag> navqa --output /output [--protocol oc-navqa|navqa] \
+      [--annotations corrected|legacy] [--seeds 0] [--questions DIR] SEQ=<run>/clustered_dsg_with_summaries.json ...
+
+Runs upstream's `scripts/eval_navqa.py` agent with `responses_shim.ResponsesOverChat` as its OpenAI client
+(Qwen3.5's own tool-call format rendered client-side; the answer schema in the system prompt). The service must
+keep multi-turn conversations. `--protocol navqa` is our labelled re-implementation of the paper's NaVQA variant
+(clip windows, view-position answers); see `navqa.py`.
