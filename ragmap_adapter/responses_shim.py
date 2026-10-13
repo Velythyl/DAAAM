@@ -245,6 +245,15 @@ class ResponsesOverChat:
         system = tools_block(tools) + ("\n\n" + instructions.strip() if instructions and instructions.strip() else "")
         text = self._post("create", model, to_chat_messages(system, input))
         head, calls = parse_tool_calls(text, tools)
+        # Native tool calling (OpenAI's, or a constrained server) can only name a declared
+        # tool. Qwen sometimes "calls" an undeclared one to give its answer (e.g. `answer`);
+        # such a call is kept as the reply's text, so the agent goes on to its final parse.
+        known = {t["name"] for t in tools}
+        unknown = [c for c in calls if c["name"] not in known]
+        if unknown:
+            calls = [c for c in calls if c["name"] in known]
+            head = (head + "\n\n" if head else "") + "\n".join(c["arguments"] for c in unknown)
+            self.log[-1]["undeclared_tool_calls"] = [c["name"] for c in unknown]
         output: list[Any] = []
         if head:
             output.append(_message_item(head))
