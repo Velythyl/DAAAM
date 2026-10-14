@@ -191,11 +191,29 @@ def main(argv: Sequence[str]) -> int:
         model = os.environ.get("RAGMAP_VLM_MODEL", "").strip()
         if not base_url or not model:
             raise ValueError("RAGMAP_VLM_BASE_URL and RAGMAP_VLM_MODEL must name the served LLM.")
-        client = ResponsesOverChat(base_url, model, max_tokens=args.max_tokens, log=calls)
+        api = os.environ.get("RAGMAP_VLM_API", "chat").strip()
+        if api == "responses":
+            # The server speaks the Responses API natively (vLLM's gpt-oss, or OpenAI itself): the real SDK.
+            from ragmap_adapter.native_responses import NativeResponses
+
+            effort = os.environ.get("RAGMAP_VLM_REASONING_EFFORT", "medium").strip() or None
+            client = NativeResponses(base_url, model, reasoning_effort=effort, log=calls,
+                                     max_output_tokens=args.max_tokens if args.max_tokens > 4096 else None)
+            run["llm"] = {"base_url": base_url, "model": model, "api": "responses (native openai SDK)",
+                          "reasoning_effort": effort, "temperature": "server default", "seed": "none (independent samples)"}
+        elif api == "chat":
+            temp_env = os.environ.get("RAGMAP_VLM_TEMPERATURE", "0").strip()
+            temperature = None if temp_env in ("", "default", "none") else float(temp_env)
+            thinking = os.environ.get("RAGMAP_VLM_THINKING", "0").strip() in ("1", "true", "on")
+            client = ResponsesOverChat(base_url, model, max_tokens=args.max_tokens, log=calls,
+                                       temperature=temperature, thinking=thinking)
+            run["llm"] = {"base_url": base_url, "model": model, "max_tokens": args.max_tokens, "thinking": thinking,
+                          "temperature": "server default" if temperature is None else temperature,
+                          "tool_calling": "Qwen3.5 template tool format rendered client-side (responses_shim)",
+                          "structured_output": "schema in system prompt, pydantic-validated, 3 attempts"}
+        else:
+            raise ValueError(f"RAGMAP_VLM_API must be 'chat' or 'responses', not {api!r}")
         ev = _load_eval(output, model, seeds, args.annotations, client)
-        run["llm"] = {"base_url": base_url, "model": model, "max_tokens": args.max_tokens, "thinking": False,
-                      "tool_calling": "Qwen3.5 template tool format rendered client-side (responses_shim)",
-                      "structured_output": "schema in system prompt, pydantic-validated, 3 attempts"}
         run["protocol"] = args.protocol
         if args.protocol == "oc-navqa":
             run["annotations_csv"] = str(ev.CORRECTED_CSV)

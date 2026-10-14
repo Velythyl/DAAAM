@@ -201,7 +201,12 @@ class ResponsesOverChat:
     """Duck-types ``openai.OpenAI`` for ``responses.create`` / ``responses.parse``."""
 
     def __init__(self, base_url: str, model: str, *, max_tokens: int = 4096, timeout: float = 900.0,
-                 parse_attempts: int = 3, log: list[dict[str, Any]] | None = None) -> None:
+                 parse_attempts: int = 3, log: list[dict[str, Any]] | None = None,
+                 temperature: float | None = 0.0, thinking: bool = False) -> None:
+        # temperature None = the server's / model's default sampling; thinking = Qwen3.5's thinking mode
+        # (the reasoning is split off by vLLM's reasoning parser or stripped below; never fed back).
+        self.temperature = temperature
+        self.thinking = thinking
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_tokens = max_tokens
@@ -216,9 +221,11 @@ class ResponsesOverChat:
                                  "messages": messages}
         for attempt in range(5):
             try:
-                response = requests.post(f"{self.base_url}/v1/chat/completions", timeout=self.timeout, json={
-                    "model": self.model, "messages": messages, "max_tokens": self.max_tokens, "temperature": 0.0,
-                    "chat_template_kwargs": {"enable_thinking": False}})
+                body = {"model": self.model, "messages": messages, "max_tokens": self.max_tokens,
+                        "chat_template_kwargs": {"enable_thinking": self.thinking}}
+                if self.temperature is not None:
+                    body["temperature"] = float(self.temperature)
+                response = requests.post(f"{self.base_url}/v1/chat/completions", timeout=self.timeout, json=body)
             except requests.RequestException as exc:
                 entry.setdefault("transport_errors", []).append(str(exc))
                 time.sleep(5 * (attempt + 1))
@@ -236,8 +243,13 @@ class ResponsesOverChat:
             entry["error"] = response.text[:2000]
             self.log.append(entry)
             raise ShimError(f"chat/completions {response.status_code}: {response.text[:500]}")
-        text = response.json()["choices"][0]["message"]["content"] or ""
+        payload = response.json()
+        message = payload["choices"][0]["message"]
+        text = message["content"] or ""
         entry["reply"] = text
+        entry["reasoning"] = message.get("reasoning_content") or message.get("reasoning")
+        entry["finish_reason"] = payload["choices"][0].get("finish_reason")
+        entry["usage"] = payload.get("usage")
         self.log.append(entry)
         return _THINK.sub("", text).strip()
 
