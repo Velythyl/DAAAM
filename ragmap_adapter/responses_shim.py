@@ -192,6 +192,12 @@ def json_object(text: str) -> str:
     return text[start:end + 1]
 
 
+MUST_RETRIEVE = (
+    "You have not used any tool yet. Before you answer, you must call at least one of the tools to look up what "
+    "you have observed: your answer has to be based on what the tools return."
+)
+
+
 def _message_item(text: str) -> SimpleNamespace:
     return SimpleNamespace(type="message", role="assistant", id=f"msg_{uuid.uuid4().hex}",
                            content=[SimpleNamespace(type="output_text", text=text)])
@@ -202,7 +208,18 @@ class ResponsesOverChat:
 
     def __init__(self, base_url: str, model: str, *, max_tokens: int = 4096, timeout: float = 900.0,
                  parse_attempts: int = 3, log: list[dict[str, Any]] | None = None,
-                 temperature: float | None = 0.0, thinking: bool = False) -> None:
+                 temperature: float | None = 0.0, thinking: bool = False, must_retrieve: bool = False,
+                 round_limit_evidence: bool = False) -> None:
+        # Ours (2026-10-22, labelled deviations, both off by default):
+        # must_retrieve -- a first reply with no tool call is re-asked (<= 2 times) with MUST_RETRIEVE, as the
+        #   ReMEmbR agent's require_retrieval does; the agent then answers from what its tools return.
+        # round_limit_evidence -- at the 15-iteration limit DAAAM's parse input keeps only user turns and model
+        #   "message"/"reasoning" items. GPT-5-mini's reasoning items carry its reading of the tool results; a
+        #   non-reasoning model via this shim has none, so the parse saw the question alone. With the flag the parse
+        #   gets the tool transcript of the last create call of that question instead.
+        self.must_retrieve = must_retrieve
+        self.round_limit_evidence = round_limit_evidence
+        self._transcripts: dict[str, list[dict[str, str]]] = {}
         # temperature None = the server's / model's default sampling; thinking = Qwen3.5's thinking mode
         # (the reasoning is split off by vLLM's reasoning parser or stripped below; never fed back).
         self.temperature = temperature
@@ -256,8 +273,21 @@ class ResponsesOverChat:
     def _create(self, *, model: str, instructions: str, input: list[Any], tools: list[dict[str, Any]],  # noqa: A002
                 tool_choice: str = "auto", **_: Any) -> SimpleNamespace:
         system = tools_block(tools) + ("\n\n" + instructions.strip() if instructions and instructions.strip() else "")
-        text = self._post("create", model, to_chat_messages(system, input))
+        messages = to_chat_messages(system, input)
+        text = self._post("create", model, messages)
         head, calls = parse_tool_calls(text, tools)
+        first_turn = not any(isinstance(i, dict) and i.get("type") == "function_call_output" for i in input)
+        if self.must_retrieve and tools and first_turn:
+            declared = {t["name"] for t in tools}
+            for attempt in range(1, 3):
+                if any(c["name"] in declared for c in calls):
+                    break
+                text = self._post("create", model, messages + [{"role": "user", "content": MUST_RETRIEVE}])
+                self.log[-1]["must_retrieve_reask"] = attempt
+                head, calls = parse_tool_calls(text, tools)
+        if self.round_limit_evidence:
+            query = next((m["content"] for m in messages if m["role"] == "user"), "")
+            self._transcripts[query] = messages[1:] + [{"role": "assistant", "content": text}]
         # Native tool calling (OpenAI's, or a constrained server) can only name a declared
         # tool. Qwen sometimes "calls" an undeclared one to give its answer (e.g. `answer`);
         # such a call is kept as the reply's text, so the agent goes on to its final parse.
@@ -280,9 +310,20 @@ class ResponsesOverChat:
         schema = json.dumps(text_format.model_json_schema())
         system = (instructions or "").strip() + SCHEMA_INSTRUCTION.format(schema=schema)
         messages = to_chat_messages(system, input)
+        evidence = False
+        if self.round_limit_evidence and messages[-1]["role"] == "user" \
+                and "Max iterations reached" in messages[-1]["content"] \
+                and not any("<tool_response>" in m["content"] for m in messages):
+            query = next((m["content"] for m in messages if m["role"] == "user"), "")
+            transcript = self._transcripts.get(query)
+            if transcript:
+                messages = [messages[0]] + transcript + [messages[-1]]
+                evidence = True
         errors = []
         for _attempt in range(self.parse_attempts):
             text = self._post("parse", model, messages)
+            if evidence:
+                self.log[-1]["round_limit_evidence"] = True
             try:
                 parsed = text_format.model_validate(unwrap_schema_echo(json.loads(json_object(text)), text_format))
             except Exception as exc:  # noqa: BLE001 - pydantic or JSON; retried, then raised

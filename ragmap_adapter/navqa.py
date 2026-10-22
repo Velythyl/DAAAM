@@ -205,12 +205,16 @@ def main(argv: Sequence[str]) -> int:
             temp_env = os.environ.get("RAGMAP_VLM_TEMPERATURE", "0").strip()
             temperature = None if temp_env in ("", "default", "none") else float(temp_env)
             thinking = os.environ.get("RAGMAP_VLM_THINKING", "0").strip() in ("1", "true", "on")
+            flag = lambda name: os.environ.get(name, "0").strip() in ("1", "true", "on")
+            must_retrieve, round_limit = flag("RAGMAP_DAAAM_MUST_RETRIEVE"), flag("RAGMAP_DAAAM_ROUND_LIMIT_EVIDENCE")
             client = ResponsesOverChat(base_url, model, max_tokens=args.max_tokens, log=calls,
-                                       temperature=temperature, thinking=thinking)
+                                       temperature=temperature, thinking=thinking, must_retrieve=must_retrieve,
+                                       round_limit_evidence=round_limit)
             run["llm"] = {"base_url": base_url, "model": model, "max_tokens": args.max_tokens, "thinking": thinking,
                           "temperature": "server default" if temperature is None else temperature,
                           "tool_calling": "Qwen3.5 template tool format rendered client-side (responses_shim)",
-                          "structured_output": "schema in system prompt, pydantic-validated, 3 attempts"}
+                          "structured_output": "schema in system prompt, pydantic-validated, 3 attempts",
+                          "must_retrieve": must_retrieve, "round_limit_evidence": round_limit}
         else:
             raise ValueError(f"RAGMAP_VLM_API must be 'chat' or 'responses', not {api!r}")
         ev = _load_eval(output, model, seeds, args.annotations, client)
