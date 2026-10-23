@@ -146,6 +146,12 @@ def run_navqa_protocol(ev: Any, dsg_paths: dict[int, Path], questions_dir: Path,
                                       "error": {"exception": str(exc), "traceback": traceback.format_exc()},
                                       "elapsed": time.time() - started, "window": [lo, hi], "filter_removed": removed})
                     continue
+                if answer is None:  # a parse with no parsed output (e.g. thinking used the whole budget): a failure
+                    responses.append({"id": sample["id"], "question": sample["question"], "type": sample["type"],
+                                      "response": None, "ground_truth": sample["answers"],
+                                      "error": {"exception": "no parsed answer (output_parsed is None)"},
+                                      "elapsed": time.time() - started, "window": [lo, hi], "filter_removed": removed})
+                    continue
                 view = None
                 if sample["type"] == "position" and answer.answer is not None and len(answer.answer) == 3:
                     view = view_position(sg, answer.answer, lo, hi)
