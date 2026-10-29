@@ -72,7 +72,28 @@ def _install() -> None:
     orchestrator_module.PipelineOrchestrator.start = start
 
 
-try:
-    _install()
-except Exception as _exc:  # noqa: BLE001
-    print(f"[ragmap hook] not installed: {_exc}", file=sys.stderr)
+def _install_describer() -> None:
+    """``RAGMAP_DAAAM_DESCRIBER=qwen``: the grounding service starts ``ragmap_adapter.qwen_grounding``'s worker
+    (a served VLM describes the regions instead of DAM-3B). Only in the node process; the spawned worker
+    imports that module itself."""
+
+    if os.environ.get("RAGMAP_DAAAM_DESCRIBER", "").strip() != "qwen":
+        return
+    if not sys.argv or not sys.argv[0].endswith("daaam_node.py"):
+        return
+    from daaam.grounding import services as grounding_services
+
+    def _get_grounding_worker_process(self):  # noqa: ANN001
+        from ragmap_adapter.qwen_grounding import QwenGroundingWorkerMultiImage
+
+        return QwenGroundingWorkerMultiImage.create_worker
+
+    grounding_services.GroundingService._get_grounding_worker_process = _get_grounding_worker_process
+    print("[ragmap hook] grounding describer: qwen (ragmap_adapter.qwen_grounding)", file=sys.stderr)
+
+
+for _step in (_install, _install_describer):
+    try:
+        _step()
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[ragmap hook] {_step.__name__} not installed: {_exc}", file=sys.stderr)
