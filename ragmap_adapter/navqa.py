@@ -203,10 +203,14 @@ def main(argv: Sequence[str]) -> int:
             from ragmap_adapter.native_responses import NativeResponses
 
             effort = os.environ.get("RAGMAP_VLM_REASONING_EFFORT", "medium").strip() or None
+            flag = lambda name: os.environ.get(name, "0").strip() in ("1", "true", "on")
+            must_retrieve, round_limit = flag("RAGMAP_DAAAM_MUST_RETRIEVE"), flag("RAGMAP_DAAAM_ROUND_LIMIT_EVIDENCE")
             client = NativeResponses(base_url, model, reasoning_effort=effort, log=calls,
-                                     max_output_tokens=args.max_tokens if args.max_tokens > 4096 else None)
+                                     max_output_tokens=args.max_tokens if args.max_tokens > 4096 else None,
+                                     must_retrieve=must_retrieve, round_limit_evidence=round_limit)
             run["llm"] = {"base_url": base_url, "model": model, "api": "responses (native openai SDK)",
-                          "reasoning_effort": effort, "temperature": "server default", "seed": "none (independent samples)"}
+                          "reasoning_effort": effort, "temperature": "server default", "seed": "none (independent samples)",
+                          "must_retrieve": must_retrieve, "round_limit_evidence": round_limit}
         elif api == "chat":
             temp_env = os.environ.get("RAGMAP_VLM_TEMPERATURE", "0").strip()
             temperature = None if temp_env in ("", "default", "none") else float(temp_env)
